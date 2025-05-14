@@ -1,70 +1,53 @@
 <?php
-// Данные из cookies
+session_start();
+require 'db.php';
+
+$messages = [];
 $errors = [];
-$oldValues = [];
-$savedValues = [];
+$values = [];
 
-if (isset($_COOKIE['form_errors'])) {
-    $errors = json_decode($_COOKIE['form_errors'], true);
-    $oldValues = json_decode($_COOKIE['old_values'], true);
-}
-foreach ($_COOKIE as $name => $value) {
-    if (strpos($name, 'saved_') === 0) {
-        $field = substr($name, 6);
-        $savedValues[$field] = $value;
-    }
-}
+if ($_SERVER['REQUEST_METHOD'] == 'GET') {
+    if (!empty($_COOKIE['save'])) {
+        setcookie('save', '', time() - 3600);
+        $messages[] = 'Спасибо, результаты сохранены.';
 
-// Получение значения поля
-function getFieldValue($field, $default = '') {
-    global $oldValues, $savedValues;
-
-    if (isset($oldValues[$field])) {
-        return $oldValues[$field];
-    }
-
-    if (isset($savedValues[$field])) {
-        return $savedValues[$field];
-    }
-
-    return $default;
-}
-
-// Функция для проверки
-function isSelected($field, $value) {
-    global $oldValues, $savedValues;
-
-    $currentValues = [];
-    if (isset($oldValues[$field])) {
-        if ($field === 'languages') {
-            $currentValues = explode(',', $oldValues[$field]);
-        } else {
-            return $oldValues[$field] === $value ? 'checked' : '';
-        }
-    } elseif (isset($savedValues[$field])) {
-        if ($field === 'languages') {
-            $currentValues = explode(',', $savedValues[$field]);
-        } else {
-            return $savedValues[$field] === $value ? 'checked' : '';
+        if (!empty($_COOKIE['login']) && !empty($_COOKIE['pass'])) {
+            $messages[] = sprintf(
+                'Вы можете <a href="login.php">войти</a> с логином <strong>%s</strong> и паролем <strong>%s</strong> для изменения данных.',
+                htmlspecialchars($_COOKIE['login']),
+                htmlspecialchars($_COOKIE['pass'])
+            );
         }
     }
 
-    return in_array($value, $currentValues) ? 'selected' : '';
-}
-
-// Проверка чекбокса
-function isChecked($field) {
-    global $oldValues, $savedValues;
-
-    if (isset($oldValues[$field])) {
-        return $oldValues[$field] ? 'checked' : '';
+    $field_names = ['name', 'phone', 'email', 'birthdate', 'gender', 'languages', 'bio', 'agreement'];
+    foreach ($field_names as $field) {
+        $errors[$field] = !empty($_COOKIE[$field.'_error']) ? $_COOKIE[$field.'_error'] : '';
+        if (!empty($errors[$field])) {
+            setcookie($field.'_error', '', time() - 3600);
+        }
+        $values[$field] = empty($_COOKIE[$field.'_value']) ? '' : $_COOKIE[$field.'_value'];
     }
 
-    if (isset($savedValues[$field])) {
-        return $savedValues[$field] ? 'checked' : '';
-    }
+    if (!empty($_SESSION['login'])) {
+        try {
+            $stmt = $pdo->prepare("SELECT a.*, GROUP_CONCAT(l.name) as languages
+                FROM applications a
+                LEFT JOIN application_languages al ON a.id = al.application_id
+                LEFT JOIN languages l ON al.language_id = l.id
+                WHERE a.login = ?
+                GROUP BY a.id");
+            $stmt->execute([$_SESSION['login']]);
+            $user_data = $stmt->fetch();
 
-    return '';
+            if ($user_data) {
+                $values = array_merge($values, $user_data);
+                $values['languages'] = $user_data['languages'] ? explode(',', $user_data['languages']) : [];
+            }
+        } catch (PDOException $e) {
+            $messages[] = '<div class="alert alert-danger">Ошибка загрузки данных: '.htmlspecialchars($e->getMessage()).'</div>';
+        }
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -110,9 +93,10 @@ function isChecked($field) {
                </ul>
            </div>
        <?php endif; ?>
+       <form action="pet.php" method="POST" id="form" class="w-50 mx-auto">
         <label>
             Текстовое поле ФИО:<br />
-            <input placeholder="Введите ФИО" name="name" id = "name" required
+            <input placeholder="Введите ФИО" class="<?php echo !empty($errors['name']) ? 'is-invalid' : ''; ?>" name="name" id = "name" required
             value="<?php echo htmlspecialchars($values['name'] ?? ''); ?>">
                     <?php if (!empty($errors['name'])): ?>
                         <div class="error-message"><?php echo htmlspecialchars($errors['name']); ?></div>
@@ -161,7 +145,7 @@ function isChecked($field) {
         </label>
         <label>
             <input type="radio"
-                   id="female" name="gender" value="female" <?php echo isSelected('gender', 'female'); ?>
+                   id="female" name="gender" value="female"
                    <?php echo ($values['gender'] ?? '') === 'female' ? 'checked' : ''; ?>
                                class="<?php echo !empty($errors['gender']) ? 'is-invalid' : ''; ?>">
             Женский
@@ -204,7 +188,7 @@ function isChecked($field) {
         "Чекбокс:"
         <br />
         <label>
-            <input type="checkbox" checked="checked" name="contract_accepted" id="contract_accepted" required
+            <input type="checkbox" checked="checked" name="agreement" id="agreement" required
             class="<?php echo !empty($errors['agreement']) ? 'is-invalid' : ''; ?>">
             <?php echo ($values['agreement'] ?? '') ? 'checked' : ''; ?>
             С контрактом ознакомлен(а)
